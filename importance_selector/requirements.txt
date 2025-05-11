@@ -1,0 +1,12 @@
+fastapi
+uvicorn
+pillow
+imagehash
+numpy
+scikit-learn
+opencv-python
+torch
+ftfy
+regex
+tqdm
+git+https://github.com/openai/CLIP.git
