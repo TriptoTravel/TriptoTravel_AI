@@ -10,6 +10,9 @@ import torch
 import clip
 import os
 import tempfile
+from fastapi.middleware.cors import CORSMiddleware
+import requests
+from io import BytesIO
 
 app = FastAPI()
 
@@ -75,7 +78,10 @@ async def analyze_images(request: AIRequest):
     # === pHash 버퍼생성 ===
     hash_vectors = []
     for info in image_infos:
-        img = Image.open(info["uri"]).convert("L").resize((32, 32))
+        response = requests.get(info["uri"])
+        img = Image.open(BytesIO(response.content)).convert("L").resize((32, 32))
+
+        
         h = imagehash.phash(img)
         hash_vectors.append(hash_to_array(h))
 
@@ -103,7 +109,9 @@ async def analyze_images(request: AIRequest):
 
         if is_selected:
             try:
-                image = preprocess(Image.open(uri)).unsqueeze(0).to(device)
+                response = requests.get(uri)
+                image = preprocess(Image.open(BytesIO(response.content))).unsqueeze(0).to(device)
+
                 with torch.no_grad():
                     image_features = model.encode_image(image)
                     similarity = (image_features @ text_features.T).squeeze(0)
