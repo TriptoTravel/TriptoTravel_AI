@@ -17,7 +17,7 @@ app = FastAPI()
 # CORS 설정
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 모든 origin 허용 (개발용)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -27,7 +27,7 @@ app.add_middleware(
 device = "cuda" if torch.cuda.is_available() else "cpu"
 model, preprocess = clip.load("ViT-B/32", device=device)
 
-# 프롬프트 매핑 (자연어 목적 → 영어 프롬프트)
+# 프롬프트 매핑
 prompt_map = {
     "food": "a food-focused travel",
     "activity": "an activity-based travel",
@@ -35,10 +35,10 @@ prompt_map = {
     "history": "a historical sightseeing travel"
 }
 
-# === Pydantic 모델 ===
+# Pydantic 모델 정의
 class ImageRequest(BaseModel):
     image_id: int
-    image_url: str  # 실제로는 GCS 경로
+    image_url: str
 
 class AIRequest(BaseModel):
     images: List[ImageRequest]
@@ -48,31 +48,44 @@ class ImportanceResponse(BaseModel):
     image_id: int
     importance: float
 
-# === 이미지 sharpness 계산 ===
-def calculate_sharpness(image_path):
-    # 이미지가 비어 있지 않은지 확인
-    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
-    if img is None:
-        return 0.0  # 이미지가 비어 있으면 중요도를 0으로 설정
-    lap = cv2.Laplacian(img, cv2.CV_64F)
-    return lap.var()
+# 이미지 선명도 계산
+def calculate_sharpness(image_url):
+    try:
+        response = requests.get(image_url)
+        if response.status_code != 200:
+            print(f"[Sharpness] 다운로드 실패: {image_url} (상태 코드: {response.status_code})")
+            return 0.0
 
-# === pHash → 이진벡터 변환 ===
+        img_array = np.asarray(bytearray(response.content), dtype=np.uint8)
+        img = cv2.imdecode(img_array, cv2.IMREAD_GRAYSCALE)
+
+        if img is None:
+            print(f"[Sharpness] 디코딩 실패: {image_url}")
+            return 0.0
+
+        lap = cv2.Laplacian(img, cv2.CV_64F)
+        return lap.var()
+    except Exception as e:
+        print(f"[Sharpness] 예외 발생 ({image_url}): {e}")
+        return 0.0
+
+# pHash → 이진 벡터 변환
 def hash_to_array(h):
     return np.array([int(b) for b in bin(int(str(h), 16))[2:].zfill(64)])
 
-# 이미지 다운로드 및 URL 유효성 확인
+# 이미지 다운로드 (PIL용)
 def download_image(image_url):
     try:
         response = requests.get(image_url)
-        # 응답 코드가 200 OK가 아닌 경우 예외 처리
         if response.status_code != 200:
-            raise Exception(f"Failed to download image: {image_url}, Status Code: {response.status_code}")
+            print(f"[Download] 다운로드 실패: {image_url} (상태 코드: {response.status_code})")
+            return None
         return Image.open(BytesIO(response.content))
     except Exception as e:
-        print(f"Error downloading {image_url}: {e}")
-        return None  # 실패하면 None 반환
+        print(f"[Download] 예외 발생 ({image_url}): {e}")
+        return None
 
+# 메인 API 엔드포인트
 @app.post("/select-primary-image", response_model=List[ImportanceResponse])
 async def analyze_images(request: AIRequest):
     image_infos = [img.dict() for img in request.images]
@@ -83,37 +96,48 @@ async def analyze_images(request: AIRequest):
     if not user_keywords:
         raise HTTPException(status_code=400, detail="Purpose is required")
 
-    # 텍스트 임베딩 (전체 키워드 기준)
+    print("[CLIP] 텍스트 임베딩 시작")
     text_tokens = clip.tokenize(all_prompts).to(device)
     with torch.no_grad():
         text_features = model.encode_text(text_tokens)
 
-    # === pHash 버퍼생성 ===
+    # pHash 기반 군집화
     hash_vectors = []
+    valid_image_infos = []
     for info in image_infos:
         img = download_image(info["image_url"])
         if img is None:
-            continue  # 이미지 다운로드 실패하면 해당 이미지를 건너뜀
-        img = img.convert("L").resize((32, 32))  # 이미지 전처리
+            print(f"[pHash] 이미지 다운로드 실패: {info['image_url']}")
+            continue
+        img = img.convert("L").resize((32, 32))
         h = imagehash.phash(img)
         hash_vectors.append(hash_to_array(h))
+        valid_image_infos.append(info)
+
+    if not hash_vectors:
+        raise HTTPException(status_code=422, detail="유효한 이미지가 없습니다.")
 
     clustering = DBSCAN(metric='hamming', eps=0.27, min_samples=1)
     labels = clustering.fit_predict(hash_vectors)
 
     grouped = {}
-    for label, info in zip(labels, image_infos):
+    for label, info in zip(labels, valid_image_infos):
         grouped.setdefault(label, []).append(info)
 
     selected_infos = []
     for group in grouped.values():
-        sharpness_scores = {info["image_url"]: calculate_sharpness(info["image_url"]) for info in group}
+        sharpness_scores = {}
+        for info in group:
+            score = calculate_sharpness(info["image_url"])
+            sharpness_scores[info["image_url"]] = score
+            print(f"[Sharpness] {info['image_url']} → {score:.2f}")
         best_path = max(sharpness_scores, key=sharpness_scores.get)
         for info in group:
             if info["image_url"] == best_path:
                 selected_infos.append(info)
+                print(f"[Sharpness] 그룹 대표 이미지 선택됨: {info['image_url']}")
 
-    # === 중요도 계산 ===
+    # CLIP 기반 중요도 계산
     result_list = []
     for info in image_infos:
         image_id = info["image_id"]
@@ -124,10 +148,11 @@ async def analyze_images(request: AIRequest):
             try:
                 img = download_image(image_url)
                 if img is None:
+                    print(f"[CLIP] 이미지 다운로드 실패: {image_url}")
                     importance = 0.0
                 else:
+                    print(f"[CLIP] 선택된 이미지 처리 중: {image_url}")
                     image = preprocess(img).unsqueeze(0).to(device)
-
                     with torch.no_grad():
                         image_features = model.encode_image(image)
                         similarity = (image_features @ text_features.T).squeeze(0)
@@ -136,10 +161,12 @@ async def analyze_images(request: AIRequest):
                     user_indices = [all_keywords.index(k) for k in user_keywords if k in all_keywords]
                     user_probs = probs[user_indices]
                     importance = float(np.max(user_probs))
+                    print(f"[CLIP] {image_url} 중요도: {importance:.4f}")
             except Exception as e:
-                print(f"{image_url} 처리 실패: {e}")
+                print(f"[CLIP] 처리 실패 ({image_url}): {e}")
                 importance = 0.0
         else:
+            print(f"[CLIP] 제외된 이미지: {image_url}")
             importance = 0.0
 
         result_list.append({
