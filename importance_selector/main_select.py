@@ -86,7 +86,7 @@ def download_image(image_url):
         return None
 
 # 메인 API 엔드포인트
-@app.post("/select-primary-image", response_model=List[ImportanceResponse])
+@app.get("/select-primary-image", response_model=List[ImportanceResponse])
 async def analyze_images(request: AIRequest):
     image_infos = [img.dict() for img in request.images]
     user_keywords = request.purpose
