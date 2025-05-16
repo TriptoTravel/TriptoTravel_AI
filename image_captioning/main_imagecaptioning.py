@@ -43,7 +43,7 @@ class BLIPModelHandler:
 # Pydantic 모델
 class ImageRequest(BaseModel):
     image_id: int
-    uri: str  # GCS 등 외부 이미지 URL
+    image_url: str  # GCS 등 외부 이미지 URL
 
 class CaptionRequest(BaseModel):
     images: List[ImageRequest]
@@ -61,7 +61,7 @@ def generate_caption(req: CaptionRequest):
     results = []
     for image_info in req.images:
         try:
-            caption = model_handler.generate_caption_from_url(image_info.uri)
+            caption = model_handler.generate_caption_from_url(image_info.image_url)
             results.append({"image_id": image_info.image_id, "draft": caption})
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"{image_info.image_id} 처리 중 오류: {str(e)}")
