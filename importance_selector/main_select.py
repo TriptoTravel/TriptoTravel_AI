@@ -41,7 +41,7 @@ class ImageRequest(BaseModel):
     image_url: str
 
 class AIRequest(BaseModel):
-    images: List[ImageRequest]
+    image_list: List[ImageRequest]
     purpose: List[str]
 
 class ImportanceResponse(BaseModel):
@@ -87,8 +87,8 @@ def download_image(image_url):
 
 # 메인 API 엔드포인트
 @app.get("/select-primary-image", response_model=List[ImportanceResponse])
-async def analyze_images(request: AIRequest):
-    image_infos = [img.dict() for img in request.images]
+async def analyze_image_list(request: AIRequest):
+    image_infos = [img.dict() for img in request.image_list]
     user_keywords = request.purpose
     all_keywords = list(prompt_map.keys())
     all_prompts = [prompt_map[k] for k in all_keywords]
@@ -124,7 +124,8 @@ async def analyze_images(request: AIRequest):
     for label, info in zip(labels, valid_image_infos):
         grouped.setdefault(label, []).append(info)
 
-    selected_infos = []
+    # 선택된 대표 이미지의 URL만 따로 set으로 저장
+    selected_urls = set()
     for group in grouped.values():
         sharpness_scores = {}
         for info in group:
@@ -132,17 +133,15 @@ async def analyze_images(request: AIRequest):
             sharpness_scores[info["image_url"]] = score
             print(f"[Sharpness] {info['image_url']} → {score:.2f}")
         best_path = max(sharpness_scores, key=sharpness_scores.get)
-        for info in group:
-            if info["image_url"] == best_path:
-                selected_infos.append(info)
-                print(f"[Sharpness] 그룹 대표 이미지 선택됨: {info['image_url']}")
+        selected_urls.add(best_path)
+        print(f"[Sharpness] 그룹 대표 이미지 선택됨: {best_path}")
 
     # CLIP 기반 중요도 계산
     result_list = []
     for info in image_infos:
         image_id = info["image_id"]
         image_url = info["image_url"]
-        is_selected = any(sel["image_id"] == image_id for sel in selected_infos)
+        is_selected = image_url in selected_urls
 
         if is_selected:
             try:
