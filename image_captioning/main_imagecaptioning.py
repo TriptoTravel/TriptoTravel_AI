@@ -67,7 +67,7 @@ model_handler_base = BLIPModelHandler("Salesforce/blip-image-captioning-base")
 finetuned_handler = BLIPModelHandler("/home/gcp_key/Customized_travel_photo_blip")
 
 # 캡션 생성 API
-@app.post("/generate-caption", response_model=List[CaptionResponse])
+@app.get("/generate-caption", response_model=List[CaptionResponse])
 def generate_caption(req: CaptionRequest):
     results = []
     for image_info in req.image_list:
