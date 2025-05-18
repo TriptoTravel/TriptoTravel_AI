@@ -36,15 +36,13 @@ class CaptionResponse(BaseModel):
 class BLIPModelHandler:
     def __init__(self, model_path_or_name: str, use_fp16: bool = True):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.processor = BlipProcessor.from_pretrained(model_path_or_name, local_files_only=True)
         
-        # FP16 설정 여부에 따라 float16으로 모델 로드
+        self.processor = BlipProcessor.from_pretrained(model_path_or_name)
         self.model = BlipForConditionalGeneration.from_pretrained(
             model_path_or_name,
-            local_files_only=True,
             torch_dtype=torch.float16 if self.device.type == "cuda" and use_fp16 else torch.float32
         ).to(self.device)
-        self.model.eval()
+
 
     def generate_caption_from_url(self, image_url: str) -> str:
         try:
@@ -73,9 +71,9 @@ def generate_caption(req: CaptionRequest):
     for image_info in req.image_list:
         try:
             base_caption = model_handler_base.generate_caption_from_url(image_info.image_url)
-            finetuned_caption = model_handler_finetuned.generate_caption_from_url(image_info.image_url)
+            finetuned_caption = finetuned_handler.generate_caption_from_url(image_info.image_url)
             combined_caption = f"{base_caption}.{finetuned_caption}."
-            results.append({"image_id": image_info.image_id, "draft": combined_caption})
+            results.append(CaptionResponse(image_id=image_info.image_id, draft=combined_caption))
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"{image_info.image_id} 처리 중 오류: {str(e)}")
     return results
