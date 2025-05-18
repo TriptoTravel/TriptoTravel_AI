@@ -6,64 +6,76 @@ from PIL import Image
 import requests
 import os
 import io
+import torch
 from fastapi.middleware.cors import CORSMiddleware
-import torch 
 
 app = FastAPI()
 
-# CORS 설정
+# CORS 설정 (운영 시 allow_origins 제한 추천)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 모든 origin 허용 (개발용)
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# 모델 핸들러 클래스
-class BLIPModelHandler:
-    def __init__(self, model_name="Salesforce/blip-image-captioning-base"):
-        # GPU
-        self.device = "cuda" if torch.cuda.is_available() else "cpu"
-        self.processor = BlipProcessor.from_pretrained(model_name)
-        self.model = BlipForConditionalGeneration.from_pretrained(model_name).to(self.device)
-
-    def generate_caption_from_url(self, image_url):
-        try:
-            response = requests.get(image_url)
-            image = Image.open(io.BytesIO(response.content)).convert("RGB")
-        except Exception as e:
-            raise RuntimeError(f"이미지 다운로드 또는 처리 실패: {e}")
-
-        inputs = self.processor(image, return_tensors="pt").to(self.device)  # 입력 데이터를 GPU로 이동
-        output = self.model.generate(**inputs)
-        caption = self.processor.decode(output[0], skip_special_tokens=True)
-        return caption
-
-# Pydantic 모델
+# 요청/응답 모델
 class ImageRequest(BaseModel):
     image_id: int
-    image_url: str  # GCS 등 외부 이미지 URL
+    image_url: str
 
 class CaptionRequest(BaseModel):
-    images: List[ImageRequest]
+    image_list: List[ImageRequest]
 
 class CaptionResponse(BaseModel):
     image_id: int
     draft: str
 
-# BLIP 모델 초기화
-model_handler = BLIPModelHandler()
+# 모델 핸들러 클래스
+class BLIPModelHandler:
+    def __init__(self, model_path_or_name: str, use_fp16: bool = True):
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.processor = BlipProcessor.from_pretrained(model_path_or_name, local_files_only=True)
+        
+        # FP16 설정 여부에 따라 float16으로 모델 로드
+        self.model = BlipForConditionalGeneration.from_pretrained(
+            model_path_or_name,
+            local_files_only=True,
+            torch_dtype=torch.float16 if self.device.type == "cuda" and use_fp16 else torch.float32
+        ).to(self.device)
+        self.model.eval()
+
+    def generate_caption_from_url(self, image_url: str) -> str:
+        try:
+            response = requests.get(image_url, timeout=5)
+            if response.status_code != 200:
+                raise RuntimeError(f"이미지 요청 실패: {response.status_code}")
+            image = Image.open(io.BytesIO(response.content)).convert("RGB")
+        except Exception as e:
+            raise RuntimeError(f"이미지 다운로드 또는 처리 실패: {e}")
+
+        inputs = self.processor(image, return_tensors="pt").to(self.device)
+        with torch.no_grad():
+            output = self.model.generate(**inputs)
+        caption = self.processor.decode(output[0], skip_special_tokens=True)
+        return caption
+
+# 모델 인스턴스 생성 (base, finetuned)
+model_handler_base = BLIPModelHandler("Salesforce/blip-image-captioning-base")
+# 파인튜닝된 모델
+finetuned_handler = BLIPModelHandler("/home/gcp_key/Customized_travel_photo_blip")
 
 # 캡션 생성 API
 @app.post("/generate-caption", response_model=List[CaptionResponse])
 def generate_caption(req: CaptionRequest):
     results = []
-    for image_info in req.images:
+    for image_info in req.image_list:
         try:
-            caption = model_handler.generate_caption_from_url(image_info.image_url)
-            results.append({"image_id": image_info.image_id, "draft": caption})
+            base_caption = model_handler_base.generate_caption_from_url(image_info.image_url)
+            finetuned_caption = model_handler_finetuned.generate_caption_from_url(image_info.image_url)
+            combined_caption = f"{base_caption}.{finetuned_caption}."
+            results.append({"image_id": image_info.image_id, "draft": combined_caption})
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"{image_info.image_id} 처리 중 오류: {str(e)}")
-
     return results
