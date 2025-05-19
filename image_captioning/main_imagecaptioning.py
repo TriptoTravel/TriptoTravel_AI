@@ -30,7 +30,7 @@ class CaptionRequest(BaseModel):
 
 class CaptionResponse(BaseModel):
     image_id: int
-    draft: str
+    caption: str
 
 # 모델 핸들러 클래스
 class BLIPModelHandler:
@@ -73,7 +73,7 @@ def generate_caption(req: CaptionRequest):
             base_caption = model_handler_base.generate_caption_from_url(image_info.image_url)
             finetuned_caption = finetuned_handler.generate_caption_from_url(image_info.image_url)
             combined_caption = f"{base_caption}.{finetuned_caption}."
-            results.append(CaptionResponse(image_id=image_info.image_id, draft=combined_caption))
+            results.append(CaptionResponse(image_id=image_info.image_id, caption=combined_caption))
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"{image_info.image_id} 처리 중 오류: {str(e)}")
     return results
