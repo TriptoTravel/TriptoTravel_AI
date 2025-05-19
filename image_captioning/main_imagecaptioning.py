@@ -3,11 +3,12 @@ from pydantic import BaseModel
 from typing import List
 from transformers import BlipProcessor, BlipForConditionalGeneration
 from PIL import Image
-import requests
 import os
 import io
 import torch
 from fastapi.middleware.cors import CORSMiddleware
+import httpx 
+
 
 app = FastAPI()
 
@@ -44,9 +45,10 @@ class BLIPModelHandler:
         ).to(self.device)
 
 
-    def generate_caption_from_url(self, image_url: str) -> str:
+    async def generate_caption_from_url(self, image_url: str) -> str:
         try:
-            response = requests.get(image_url, timeout=5)
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                response = await client.get(image_url)
             if response.status_code != 200:
                 raise RuntimeError(f"이미지 요청 실패: {response.status_code}")
             image = Image.open(io.BytesIO(response.content)).convert("RGB")
@@ -66,12 +68,12 @@ finetuned_handler = BLIPModelHandler("/home/gcp_key/Customized_travel_photo_blip
 
 # 캡션 생성 API
 @app.get("/generate-caption", response_model=List[CaptionResponse])
-def generate_caption(req: CaptionRequest):
+async def generate_caption(req: CaptionRequest):
     results = []
     for image_info in req.image_list:
         try:
-            base_caption = model_handler_base.generate_caption_from_url(image_info.image_url)
-            finetuned_caption = finetuned_handler.generate_caption_from_url(image_info.image_url)
+            base_caption = await model_handler_base.generate_caption_from_url(image_info.image_url)
+            finetuned_caption = await finetuned_handler.generate_caption_from_url(image_info.image_url)
             combined_caption = f"{base_caption}.{finetuned_caption}."
             results.append(CaptionResponse(image_id=image_info.image_id, caption=combined_caption))
         except Exception as e:
