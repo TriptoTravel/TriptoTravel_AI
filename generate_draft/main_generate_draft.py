@@ -160,7 +160,6 @@ def generate_travel_story(image_list: List[ImageRequest]) -> List[ImageDraft]:
     return draft_list
 
 # ====== API 엔드포인트 ======
-@app.get("/generate-travel-log", response_model=DraftListResponse)
+@app.get("/generate-travel-log", response_model=List[ImageDraft])
 async def generate_travelogue_draft(request: AIRequest):
-    drafts = generate_travel_story(image_list=request.image_list)
-    return {"drafts": drafts}
+    return generate_travel_story(image_list=request.image_list)
