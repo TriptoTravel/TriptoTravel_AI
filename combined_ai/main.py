@@ -332,7 +332,7 @@ def generate_travel_story(image_list: List[ImageRequest_generate]) -> List[Image
         style_instruction = """
     요약형 여행기의 특징:
     - 목적: 주요 활동과 감정을 간결하게 정리
-    - 문체: '~이다', '~였다', '~하지 않았다' 형식의 중립적 서술체 사용 (반말 아님, '~했어' 금지)
+    - 문체: '~이다', '~였다', '~하지 않았다' 형식의 중립적 서술체 사용
     - 구성: 각 활동을 2~3문장 내외로 요약
     - 감정 표현은 유지하되 정보는 간단하게
     - 전체 흐름은 부드럽게 이어지게 구성
@@ -343,7 +343,7 @@ def generate_travel_story(image_list: List[ImageRequest_generate]) -> List[Image
     else:
         style_instruction = """
     감성형 여행기의 특징:
-    - 문체: '~이다', '~였다' 같은 중립적 서술체 (반말·존댓말 금지)
+    - 문체: '~이다', '~였다' 같은 중립적 서술체
     - 정보보다 감정과 분위기에 집중
     - 이미지 설명은 절대 따로 쓰지 말고, 감정 속에 자연스럽게 녹여 쓸 것
     - 전체 문장은 부드럽게 이어져야 하며, 은유적 표현을 포함
@@ -365,6 +365,8 @@ def generate_travel_story(image_list: List[ImageRequest_generate]) -> List[Image
 - 마커 이후에는 해당 이미지에 대한 3~5문장 분량의 자연스러운 여행기 단락을 작성하세요.
 - 모든 단락이 잘 이어져서 하나의 여행기처럼 보이게 작성해주세요.
 - 문체는 스타일에 따라 아래 규칙을 따르세요.
+- caption을 통해 상황과 분위기만 유추하고, 전반적인 일기 내용은 how로 구성할 것
+- 절대 caption 내용을 그대로 넣지말 것
 
 {style_instruction}
 
@@ -374,12 +376,12 @@ def generate_travel_story(image_list: List[ImageRequest_generate]) -> List[Image
 """
 
     response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4-turbo",
         messages=[
             {"role": "system", "content": "You are a helpful travel blogger."},
             {"role": "user", "content": prompt}
         ],
-        max_tokens=2000
+        max_tokens=80
     )
 
     full_text = response['choices'][0]['message']['content'].strip()
