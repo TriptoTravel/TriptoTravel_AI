@@ -381,7 +381,7 @@ def generate_travel_story(image_list: List[ImageRequest_generate]) -> List[Image
             {"role": "system", "content": "You are a helpful travel blogger."},
             {"role": "user", "content": prompt}
         ],
-        max_tokens=80
+        max_tokens=2000
     )
 
     full_text = response['choices'][0]['message']['content'].strip()
