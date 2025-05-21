@@ -36,7 +36,7 @@ class DraftListResponse(BaseModel):
 
 # ====== 여행기 생성 함수 ======
 def generate_travel_story(image_list: List[ImageRequest]) -> List[ImageDraft]:
-    style = image_list[0].style or "요약약형"
+    style = image_list[0].style or "요약형"
     image_infos = []
 
     for idx, image in enumerate(image_list):
@@ -81,7 +81,7 @@ def generate_travel_story(image_list: List[ImageRequest]) -> List[ImageDraft]:
     - 시간과 장소를 반드시 포함하세요:
         - 시간은 'YYYY년 MM월 DD일 오전/오후 HH시 mm분' 형식
         - 장소는 도로명 주소 전체를 문장 속에 자연스럽게 녹여주세요
-
+        
     예시:
     - 2024년 3월 21일 오전 6시 20분, 제주특별자치도 서귀포시 성산읍 일출로 284-12에 위치한 성산일출봉에 올랐습니다. 이곳은 유네스코 세계자연유산으로 지정된 분화구로, 일출을 보기 위해 많은 관광객이 찾는 명소입니다.
 
@@ -90,10 +90,9 @@ def generate_travel_story(image_list: List[ImageRequest]) -> List[ImageDraft]:
         style_instruction = """
     요약형 여행기의 특징:
     - 목적: 주요 활동과 감정을 간결하게 정리
-    - 문체: '~이다', '~였다', '~하지 않았다' 형식의 중립적 서술체 사용 (반말 아님, '~했어' 금지)
+    - 문체: '~이다', '~였다', '~하지 않았다' 형식의 중립적 서술체 사용
     - 구성: 각 활동을 2~3문장 내외로 요약
     - 감정 표현은 유지하되 정보는 간단하게
-    - 전체 흐름은 부드럽게 이어지게 구성
     
     예시:
     - 오후 늦게 도착한 성산일출봉은 여전히 많은 사람들로 붐볐다. 우리는 잠시 전망대에 올라 맑은 하늘과 바다를 바라보았다.
@@ -101,11 +100,10 @@ def generate_travel_story(image_list: List[ImageRequest]) -> List[ImageDraft]:
     else:
         style_instruction = """
     감성형 여행기의 특징:
-    - 문체: '~이다', '~였다' 같은 중립적 서술체 (반말·존댓말 금지)
+    - 문체: '~이다', '~였다' 같은 중립적 서술체
     - 정보보다 감정과 분위기에 집중
     - 이미지 설명은 절대 따로 쓰지 말고, 감정 속에 자연스럽게 녹여 쓸 것
     - 전체 문장은 부드럽게 이어져야 하며, 은유적 표현을 포함
-
     예시:
     - 아침 햇살에 비친 협재해변은 조용하고 따뜻했다. 복잡했던 마음이 파도 소리와 함께 떠내려간 듯 잔잔해졌다.
     """
@@ -123,6 +121,8 @@ def generate_travel_story(image_list: List[ImageRequest]) -> List[ImageDraft]:
 - 마커 이후에는 해당 이미지에 대한 3~5문장 분량의 자연스러운 여행기 단락을 작성하세요.
 - 모든 단락이 잘 이어져서 하나의 여행기처럼 보이게 작성해주세요.
 - 문체는 스타일에 따라 아래 규칙을 따르세요.
+- caption을 통해 상황과 분위기만 유추하고, 전반적인 일기 내용은 how로 구성할 것
+- 절대 caption 내용을 그대로 넣지말 것
 
 {style_instruction}
 
@@ -132,7 +132,7 @@ def generate_travel_story(image_list: List[ImageRequest]) -> List[ImageDraft]:
 """
 
     response = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
+        model="gpt-4-turbo",
         messages=[
             {"role": "system", "content": "You are a helpful travel blogger."},
             {"role": "user", "content": prompt}
