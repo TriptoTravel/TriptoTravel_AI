@@ -367,8 +367,8 @@ def generate_travel_story(image_list: List[ImageRequest_generate]) -> List[Image
 - 마커 이후에는 해당 이미지에 대한 3~5문장 분량의 자연스러운 여행기 단락을 작성하세요.
 - 모든 단락이 잘 이어져서 하나의 여행기처럼 보이게 작성해주세요.
 - 문체는 스타일에 따라 아래 규칙을 따르세요.
-- caption을 통해 상황과 분위기만 유추하고, 전반적인 일기 내용은 how로 구성할 것
-- 절대 caption 내용을 그대로 넣지말 것
+- caption을 통해 "상황과 분위기만 유추"하고, 전반적인 일기 내용은 how로 구성할 것, caption 내용을 그대로 넣지말 것
+
 
 {style_instruction}
 
