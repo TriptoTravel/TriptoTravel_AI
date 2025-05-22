@@ -22,6 +22,9 @@ import clip                           # CLIP 모델
 from transformers import BlipProcessor, BlipForConditionalGeneration  # 캡션 생성
 import openai                         # 여행기 생성
 
+#===== 비동기 처리 =====
+import asyncio
+
 app = FastAPI()
 
 # CORS 설정
@@ -61,20 +64,18 @@ class ImportanceResponse(BaseModel):
     importance: float
 
 # 이미지 선명도 계산
-def calculate_sharpness(image_url):
+async def calculate_sharpness(image_url):
     try:
-        response = requests.get(image_url)
+        async with httpx.AsyncClient() as client:
+            response = await client.get(image_url, timeout=10)
         if response.status_code != 200:
             print(f"[Sharpness] 다운로드 실패: {image_url} (상태 코드: {response.status_code})")
             return 0.0
-
         img_array = np.asarray(bytearray(response.content), dtype=np.uint8)
         img = cv2.imdecode(img_array, cv2.IMREAD_GRAYSCALE)
-
         if img is None:
             print(f"[Sharpness] 디코딩 실패: {image_url}")
             return 0.0
-
         lap = cv2.Laplacian(img, cv2.CV_64F)
         return lap.var()
     except Exception as e:
@@ -86,11 +87,12 @@ def hash_to_array(h):
     return np.array([int(b) for b in bin(int(str(h), 16))[2:].zfill(64)])
 
 # 이미지 다운로드 (PIL용)
-def download_image(image_url):
+async def download_image(image_url):
     try:
-        response = requests.get(image_url)
+        async with httpx.AsyncClient() as client:
+            response = await client.get(image_url, timeout=10)
         if response.status_code != 200:
-            print(f"[Download] 다운로드 실패: {image_url} (상태 코드: {response.status_code})")
+            print(f"[Download] 실패: {image_url}")
             return None
         return Image.open(BytesIO(response.content))
     except Exception as e:
@@ -113,18 +115,25 @@ async def analyze_image_list(request: AIRequest_select):
     with torch.no_grad():
         text_features = model.encode_text(text_tokens)
 
-    # pHash 기반 군집화
-    hash_vectors = []
-    valid_image_infos = []
-    for info in image_infos:
-        img = download_image(info["image_url"])
+    # 비동기 이미지 다운로드 및 해시 계산
+    async def get_hash_vector(info):
+        img = await download_image(info["image_url"])
         if img is None:
-            print(f"[pHash] 이미지 다운로드 실패: {info['image_url']}")
-            continue
+            return None
         img = img.convert("L").resize((32, 32))
         h = imagehash.phash(img)
-        hash_vectors.append(hash_to_array(h))
-        valid_image_infos.append(info)
+        return (info, hash_to_array(h))
+
+    hash_tasks = [get_hash_vector(info) for info in image_infos]
+    hash_results = await asyncio.gather(*hash_tasks)
+
+    valid_image_infos = []
+    hash_vectors = []
+    for result in hash_results:
+        if result:
+            info, hvec = result
+            valid_image_infos.append(info)
+            hash_vectors.append(hvec)
 
     if not hash_vectors:
         raise HTTPException(status_code=422, detail="유효한 이미지가 없습니다.")
@@ -136,15 +145,16 @@ async def analyze_image_list(request: AIRequest_select):
     for label, info in zip(labels, valid_image_infos):
         grouped.setdefault(label, []).append(info)
 
-    # 선택된 대표 이미지의 URL만 따로 set으로 저장
+    # 비동기 선명도 계산
     selected_urls = set()
     for group in grouped.values():
-        sharpness_scores = {}
-        for info in group:
-            score = calculate_sharpness(info["image_url"])
-            sharpness_scores[info["image_url"]] = score
-            print(f"[Sharpness] {info['image_url']} → {score:.2f}")
-        best_path = max(sharpness_scores, key=sharpness_scores.get)
+        sharp_tasks = [calculate_sharpness(info["image_url"]) for info in group]
+        sharp_scores = await asyncio.gather(*sharp_tasks)
+
+        sharpness_map = {
+            info["image_url"]: score for info, score in zip(group, sharp_scores)
+        }
+        best_path = max(sharpness_map, key=sharpness_map.get)
         selected_urls.add(best_path)
         print(f"[Sharpness] 그룹 대표 이미지 선택됨: {best_path}")
 
@@ -156,28 +166,19 @@ async def analyze_image_list(request: AIRequest_select):
         is_selected = image_url in selected_urls
 
         if is_selected:
-            try:
-                img = download_image(image_url)
-                if img is None:
-                    print(f"[CLIP] 이미지 다운로드 실패: {image_url}")
-                    importance = 0.0
-                else:
-                    print(f"[CLIP] 선택된 이미지 처리 중: {image_url}")
-                    image = preprocess(img).unsqueeze(0).to(device)
-                    with torch.no_grad():
-                        image_features = model.encode_image(image)
-                        similarity = (image_features @ text_features.T).squeeze(0)
-                        probs = similarity.softmax(dim=0).cpu().numpy()
-
-                    user_indices = [all_keywords.index(k) for k in user_keywords if k in all_keywords]
-                    user_probs = probs[user_indices]
-                    importance = float(np.max(user_probs))
-                    print(f"[CLIP] {image_url} 중요도: {importance:.4f}")
-            except Exception as e:
-                print(f"[CLIP] 처리 실패 ({image_url}): {e}")
+            img = await download_image(image_url)
+            if img is None:
                 importance = 0.0
+            else:
+                image = preprocess(img).unsqueeze(0).to(device)
+                with torch.no_grad():
+                    image_features = model.encode_image(image)
+                    similarity = (image_features @ text_features.T).squeeze(0)
+                    probs = similarity.softmax(dim=0).cpu().numpy()
+                user_indices = [all_keywords.index(k) for k in user_keywords if k in all_keywords]
+                user_probs = probs[user_indices]
+                importance = float(np.max(user_probs))
         else:
-            print(f"[CLIP] 제외된 이미지: {image_url}")
             importance = 0.0
 
         result_list.append({
@@ -186,7 +187,7 @@ async def analyze_image_list(request: AIRequest_select):
         })
 
     return result_list
-    
+
 # ==========캡셔닝 모델=========== #
 
 # 요청/응답 모델
@@ -237,17 +238,18 @@ finetuned_handler = BLIPModelHandler("/home/gcp_key/Customized_travel_photo_blip
 # 캡션 생성 API
 @app.get("/generate-caption", response_model=List[CaptionResponse])
 async def generate_caption(req: CaptionRequest):
-    results = []
-    for image_info in req.image_list:
+    async def process_image(image_info):
         try:
             base_caption = await model_handler_base.generate_caption_from_url(image_info.image_url)
             finetuned_caption = await finetuned_handler.generate_caption_from_url(image_info.image_url)
             combined_caption = f"{base_caption}.{finetuned_caption}."
-            results.append(CaptionResponse(image_id=image_info.image_id, caption=combined_caption))
+            return CaptionResponse(image_id=image_info.image_id, caption=combined_caption)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"{image_info.image_id} 처리 중 오류: {str(e)}")
-    return results
 
+    tasks = [process_image(info) for info in req.image_list]
+    results = await asyncio.gather(*tasks)
+    return results
 
 # ==========여행기 생성=========== #
 
