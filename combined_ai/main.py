@@ -22,7 +22,7 @@ import clip                           # CLIP 모델
 from transformers import BlipProcessor, BlipForConditionalGeneration  # 캡션 생성
 import openai                         # 여행기 생성
 
-#===== 비동기 처리 =====
+# ===== 비동기 처리 =====
 import asyncio
 
 app = FastAPI()
